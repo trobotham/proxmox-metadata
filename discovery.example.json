@@ -1,0 +1,10 @@
+{
+  "pvesh": "/usr/bin/pvesh",
+  "kea_dhcp4_config": "/etc/kea/kea-dhcp4.conf",
+  "output": "/etc/proxmox-metadata/config.json",
+  "listen": "169.254.169.254:80",
+  "require_token": true,
+  "max_token_ttl_seconds": 21600,
+  "ipv6_gateway": "2001:db8:100::2",
+  "overrides": {}
+}

@@ -1,0 +1,32 @@
+{
+  "listen": "169.254.169.254:80",
+  "require_token": true,
+  "max_token_ttl_seconds": 21600,
+  "instances": [
+    {
+      "sources": [
+        "192.0.2.43/32",
+        "2001:db8:100::43/128"
+      ],
+      "instance_id": "pve-vm-101",
+      "vm_id": 101,
+      "hostname": "vm1",
+      "public_ipv4": "192.0.2.43",
+      "ipv6": "2001:db8:100::43",
+      "ipv6_prefix": "2001:db8:100:1::/64",
+      "gateway_ipv4": "192.0.2.41",
+      "gateway_ipv6": "2001:db8:100::2",
+      "ipv4_networks": [
+        {
+          "address": "192.0.2.43",
+          "prefix": "192.0.2.40/29",
+          "gateway": "192.0.2.41"
+        }
+      ],
+      "custom_metadata": {
+        "environment": "production"
+      },
+      "user_data": "#cloud-config\nmanage_etc_hosts: true\n"
+    }
+  ]
+}

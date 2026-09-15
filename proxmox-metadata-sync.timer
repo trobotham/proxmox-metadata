@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically refresh Proxmox instance metadata
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

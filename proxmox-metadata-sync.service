@@ -1,0 +1,18 @@
+[Unit]
+Description=Refresh Proxmox instance metadata
+After=pve-cluster.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proxmox-metadata-sync -config /etc/proxmox-metadata/discovery.json
+ExecStartPost=/bin/chown root:proxmox-metadata /etc/proxmox-metadata/config.json
+ExecStartPost=/bin/chmod 0640 /etc/proxmox-metadata/config.json
+ExecStartPost=/bin/systemctl reload-or-restart proxmox-metadata.service
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/proxmox-metadata

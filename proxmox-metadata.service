@@ -1,0 +1,29 @@
+[Unit]
+Description=Proxmox instance metadata service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxmox-metadata
+Group=proxmox-metadata
+ExecStart=/usr/local/sbin/proxmox-metadata -config /etc/proxmox-metadata/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
