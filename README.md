@@ -46,6 +46,21 @@ go build -trimpath -ldflags='-s -w' -o proxmox-metadata .
 go build -trimpath -ldflags='-s -w' -o proxmox-metadata-sync ./cmd/proxmox-metadata-sync
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request. It tests with Go 1.22 and the current stable Go release, runs the race detector, `go vet`, and ShellCheck, builds both binaries, and uploads the stable-Go binaries as a seven-day workflow artifact.
+
+Run the same core checks locally:
+
+```bash
+go test -race -count=1 ./...
+go vet ./...
+shellcheck guest/proxmox-network-helper
+mkdir -p build
+go build -trimpath -o build/proxmox-metadata .
+go build -trimpath -o build/proxmox-metadata-sync ./cmd/proxmox-metadata-sync
+```
+
 ## Create the service account
 
 This step is mandatory. If the user is missing, systemd fails with `status=217/USER`.
@@ -97,7 +112,66 @@ Edit `/etc/proxmox-metadata/discovery.json`:
 
 The synchronizer obtains guest placement, type, lifecycle status, pool, tags, uptime, CPU and memory sizing, OS/architecture, firmware, machine type, safe guest settings, MAC addresses, bridges, VLANs, firewall flags, MTU, and rate limits. It excludes disks, password fields, API credentials, arbitrary QEMU arguments, and other likely secret-bearing values.
 
-For each IPv4 address in `ipfilter-net0`, it uses longest-prefix matching against Kea `subnet4` definitions and records the subnet ID, CIDR, `routers` gateway, `next-server`, and subnet options.
+For each IPv4 address in `ipfilter-net0` or a tagged Kea reservation, it uses longest-prefix matching against Kea `subnet4` definitions and records the subnet ID, CIDR, `routers` gateway, `next-server`, and subnet options.
+
+### Associate multiple Kea reservations with one VM
+
+MAC addresses do not inherently identify a Proxmox VM, especially when secondary
+addresses use synthetic or distinct DHCP MAC addresses. Add ownership metadata to
+each Kea reservation with `user-context`. The context is ignored by DHCP clients
+but consumed by `proxmox-metadata-sync`:
+
+```json
+{
+  "subnet": "192.0.2.40/29",
+  "id": 1,
+  "option-data": [
+    { "name": "routers", "data": "192.0.2.41" }
+  ],
+  "reservations": [
+    {
+      "hw-address": "02:00:00:00:00:43",
+      "ip-address": "192.0.2.43",
+      "user-context": {
+        "proxmox-vmid": 101,
+        "proxmox-primary": true
+      }
+    },
+    {
+      "hw-address": "02:00:00:00:00:44",
+      "ip-address": "192.0.2.44",
+      "user-context": {
+        "proxmox-vmid": 101
+      }
+    }
+  ]
+}
+```
+
+Tag every reservation that belongs to the VM. Exactly one address should have
+`"proxmox-primary": true`; all unmarked addresses are secondary. Reservations may
+live in different Kea subnets and use different gateways or MAC addresses. VMID
+may be a JSON number or numeric string. The equivalent nested form is also
+accepted:
+
+```json
+"user-context": {
+  "proxmox-metadata": {
+    "vmid": 101,
+    "primary": true
+  }
+}
+```
+
+The generated `/latest/meta-data/network/ipv4` records include `dhcp_mac` and
+`primary`. The guest helper configures the primary first, then binds every
+secondary address and installs a source-specific routing table using the gateway
+from that address's Kea subnet. Tagged addresses are also authorized metadata
+source addresses, so ownership tags must be treated as security-sensitive.
+
+The synchronizer refuses to generate configuration when the same IPv4 address is
+tagged for different VMIDs. If no address is explicitly primary, it retains the
+legacy behavior and selects the lowest sorted IPv4 address.
 
 ## Special notes about overrides
 
@@ -126,8 +200,8 @@ Important behavior:
 - `instance_id`, `hostname`, and `ipv6_prefix` replace derived values.
 - `custom_metadata` values must be strings and appear at `/latest/meta-data/custom/<key>`.
 - `user_data` is returned verbatim at `/latest/user-data`; newlines must be JSON-escaped.
-- An override does not create a VM mapping. The VM must exist and have a usable `ipfilter-net0`.
-- Do not use overrides to repair missing source addresses; correct `ipfilter-net0` instead.
+- An override does not create a VM mapping. The VM must exist and have either a usable `ipfilter-net0` or a tagged Kea reservation.
+- Do not use overrides to repair missing source addresses; correct `ipfilter-net0` or the Kea reservation ownership tag instead.
 - Never duplicate the same `/32`, `/128`, or equally specific source CIDR across VMs. Ambiguous requests are rejected.
 - `/etc/proxmox-metadata/config.json` is regenerated every cycle. Manual edits are lost.
 - Put only non-secret workload information in overrides.
@@ -259,6 +333,56 @@ Other useful endpoints:
 /latest/meta-data/kea
 /latest/meta-data/ipv6-prefix
 /latest/user-data
+```
+
+## Guest network helper
+
+The `guest/` directory contains a Linode-style network helper for Linux guests. It
+retrieves `/latest/meta-data/network/ipv4`, binds every assigned IPv4 address, and
+creates one source-policy routing table per address. This is important when a VM
+has addresses from multiple prefixes with different gateways: traffic sourced
+from each address leaves through the gateway associated with that prefix.
+
+The guest must first have bootstrap connectivity to the metadata service, normally
+from a DHCP lease containing the `169.254.169.254/32` classless static route. The
+helper cannot discover assignments on a completely unconfigured interface.
+
+On Ubuntu 22.04, install it inside the VM with:
+
+```bash
+sudo install -m 0755 guest/proxmox-network-helper /usr/local/sbin/proxmox-network-helper
+sudo install -m 0644 guest/proxmox-network-helper.service /etc/systemd/system/
+sudo install -m 0644 guest/proxmox-network-helper.timer /etc/systemd/system/
+sudo install -m 0644 guest/proxmox-network-helper.default /etc/default/proxmox-network-helper
+sudo systemctl daemon-reload
+sudo systemctl enable --now proxmox-network-helper.timer
+sudo systemctl start proxmox-network-helper.service
+```
+
+The interface is detected from the route to the metadata IP. If detection is not
+appropriate for the guest, set `INTERFACE=ens18` in
+`/etc/default/proxmox-network-helper`. The routing table and rule ranges can also
+be overridden there; choose unused ranges if the guest already uses tables or
+priorities beginning at `20100`.
+
+Inspect the result with:
+
+```bash
+systemctl status proxmox-network-helper.service
+journalctl -u proxmox-network-helper.service --no-pager
+ip -4 address show dev ens18
+ip -4 rule show
+ip -4 route show table 20100
+ip -4 route get 1.1.1.1 from 192.0.2.43
+```
+
+The helper only removes policy rules recorded in its own state file. It does not
+flush the interface, replace the main default route, or delete addresses, which
+avoids disconnecting the guest when metadata is temporarily unavailable. Run it
+again at any time to pull newly assigned addresses and routes immediately:
+
+```bash
+sudo systemctl start proxmox-network-helper.service
 ```
 
 ## Troubleshooting

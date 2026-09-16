@@ -1,0 +1,12 @@
+[Unit]
+Description=Configure guest IPv4 addresses from Proxmox metadata
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/proxmox-network-helper
+ExecStart=/usr/local/sbin/proxmox-network-helper
+
+[Install]
+WantedBy=multi-user.target

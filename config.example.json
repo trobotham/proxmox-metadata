@@ -20,7 +20,9 @@
         {
           "address": "192.0.2.43",
           "prefix": "192.0.2.40/29",
-          "gateway": "192.0.2.41"
+          "gateway": "192.0.2.41",
+          "dhcp_mac": "02:00:00:00:00:43",
+          "primary": true
         }
       ],
       "custom_metadata": {

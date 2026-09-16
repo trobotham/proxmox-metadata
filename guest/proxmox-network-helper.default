@@ -1,0 +1,11 @@
+# Optional interface override. If empty, the metadata route determines it.
+INTERFACE=
+
+# Metadata endpoint and routing-policy allocation range.
+METADATA_URL=http://169.254.169.254
+METADATA_IP=169.254.169.254
+TABLE_BASE=20100
+RULE_PRIORITY_BASE=20100
+
+# Ephemeral state used to reconcile rules created by earlier runs.
+STATE_FILE=/run/proxmox-network-helper.state

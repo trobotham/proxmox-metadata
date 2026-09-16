@@ -64,6 +64,8 @@ type IPv4Network struct {
 	Address string `json:"address"`
 	Prefix  string `json:"prefix"`
 	Gateway string `json:"gateway"`
+	DHCPMAC string `json:"dhcp_mac,omitempty"`
+	Primary bool   `json:"primary,omitempty"`
 }
 
 type runtimeConfig struct {

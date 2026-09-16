@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically refresh guest networking from Proxmox metadata
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=proxmox-network-helper.service
+
+[Install]
+WantedBy=timers.target

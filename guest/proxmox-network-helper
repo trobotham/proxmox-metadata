@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+METADATA_URL="${METADATA_URL:-http://169.254.169.254}"
+METADATA_IP="${METADATA_IP:-169.254.169.254}"
+INTERFACE="${INTERFACE:-${1:-}}"
+STATE_FILE="${STATE_FILE:-/run/proxmox-network-helper.state}"
+TABLE_BASE="${TABLE_BASE:-20100}"
+RULE_PRIORITY_BASE="${RULE_PRIORITY_BASE:-20100}"
+
+log() { printf 'proxmox-network-helper: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+[[ ${EUID} -eq 0 ]] || die "must run as root"
+for command in curl ip python3 flock; do
+    command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"
+done
+
+install -d -m 0755 "$(dirname "$STATE_FILE")" /run/lock
+exec 9>/run/lock/proxmox-network-helper.lock
+flock -n 9 || die "another instance is already running"
+
+if [[ -z "$INTERFACE" ]]; then
+    INTERFACE="$(ip -4 route get "$METADATA_IP" 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+fi
+[[ -n "$INTERFACE" ]] || die "could not determine the metadata-facing interface; set INTERFACE"
+ip link show dev "$INTERFACE" >/dev/null 2>&1 || die "interface does not exist: $INTERFACE"
+
+TOKEN="$(curl --noproxy '*' --fail --silent --show-error --connect-timeout 3 --max-time 10 \
+    -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' \
+    "$METADATA_URL/latest/api/token")" || die "could not obtain a metadata token"
+[[ -n "$TOKEN" ]] || die "metadata service returned an empty token"
+
+metadata_file="$(mktemp)"
+records_file="$(mktemp)"
+new_state="$(mktemp)"
+trap 'rm -f "$metadata_file" "$records_file" "$new_state"' EXIT
+
+curl --noproxy '*' --fail --silent --show-error --connect-timeout 3 --max-time 10 \
+    -H "X-aws-ec2-metadata-token: $TOKEN" \
+    "$METADATA_URL/latest/meta-data/network/ipv4" >"$metadata_file" \
+    || die "could not download IPv4 metadata"
+
+python3 - "$metadata_file" >"$records_file" <<'PY'
+import ipaddress
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    records = json.load(source)
+
+if not isinstance(records, list):
+    raise SystemExit("IPv4 metadata must be a JSON array")
+
+normalized = []
+for record in records:
+    address = ipaddress.ip_address(record["address"])
+    network = ipaddress.ip_network(record["prefix"], strict=False)
+    gateway = ipaddress.ip_address(record["gateway"])
+    if address.version != 4 or network.version != 4 or gateway.version != 4:
+        raise SystemExit("only IPv4 records are supported")
+    if address not in network:
+        raise SystemExit(f"{address} is not inside {network}")
+    primary = record.get("primary") is True
+    normalized.append((not primary, int(address), str(address), network.prefixlen, str(network), str(gateway)))
+
+for _, _, address, prefixlen, network, gateway in sorted(normalized):
+    print(f"{address}|{prefixlen}|{network}|{gateway}")
+PY
+
+[[ -s "$records_file" ]] || die "metadata did not return any IPv4 assignments"
+
+# Remove only policy rules and tables recorded by an earlier helper run. Addresses
+# are deliberately retained so a transient metadata failure cannot disconnect a VM.
+if [[ -f "$STATE_FILE" ]]; then
+    while IFS='|' read -r priority table _address; do
+        [[ "$priority" =~ ^[0-9]+$ && "$table" =~ ^[0-9]+$ ]] || continue
+        while ip -4 rule del priority "$priority" 2>/dev/null; do :; done
+        ip -4 route flush table "$table" 2>/dev/null || true
+    done <"$STATE_FILE"
+fi
+
+index=0
+while IFS='|' read -r address prefixlen network gateway; do
+    table=$((TABLE_BASE + index))
+    priority=$((RULE_PRIORITY_BASE + index))
+
+    ip -4 address replace "$address/$prefixlen" dev "$INTERFACE"
+    ip -4 route replace table "$table" "$network" dev "$INTERFACE" \
+        scope link src "$address"
+    ip -4 route replace table "$table" default via "$gateway" dev "$INTERFACE" \
+        onlink src "$address"
+    ip -4 rule add priority "$priority" from "$address/32" lookup "$table"
+
+    printf '%s|%s|%s\n' "$priority" "$table" "$address" >>"$new_state"
+    log "configured $address/$prefixlen via $gateway on $INTERFACE (table $table)"
+    index=$((index + 1))
+done <"$records_file"
+
+install -m 0600 "$new_state" "$STATE_FILE"
+ip -4 route flush cache 2>/dev/null || true
+log "applied $index IPv4 assignment(s)"
