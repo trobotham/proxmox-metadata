@@ -1,0 +1,3 @@
+build/
+/proxmox-metadata
+/proxmox-metadata-sync
