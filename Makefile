@@ -50,7 +50,12 @@ fmt-check: ## Fail if Go sources are not gofmt-formatted
 
 shellcheck: ## Lint the guest network helper
 	bash -n guest/proxmox-network-helper
-	shellcheck guest/proxmox-network-helper
+	@if command -v shellcheck >/dev/null; then \
+		echo "shellcheck guest/proxmox-network-helper"; \
+		shellcheck guest/proxmox-network-helper; \
+	else \
+		echo "warning: shellcheck not installed, skipping lint (apt install shellcheck)" >&2; \
+	fi
 
 check: test vet shellcheck ## Run tests, vet, and shellcheck
 
