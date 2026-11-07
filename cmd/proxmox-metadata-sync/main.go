@@ -184,6 +184,9 @@ func loadSyncConfig(path string) (SyncConfig, error) {
 	if cfg.KeaDHCP4Config == "" { cfg.KeaDHCP4Config = "/etc/kea/kea-dhcp4.conf" }
 	if cfg.Output == "" { cfg.Output = "/etc/proxmox-metadata/config.json" }
 	if cfg.Listen == "" { cfg.Listen = "169.254.169.254:80" }
+	if host, port, err := net.SplitHostPort(cfg.Listen); err != nil || host != "169.254.169.254" || port == "" {
+		return cfg, fmt.Errorf("listen %q: must be 169.254.169.254:<port>", cfg.Listen)
+	}
 	if cfg.MaxTokenTTLSeconds == 0 { cfg.MaxTokenTTLSeconds = 21600 }
 	if cfg.MaxTokenTTLSeconds < 1 || cfg.MaxTokenTTLSeconds > 21600 {
 		return cfg, fmt.Errorf("max_token_ttl_seconds must be between 1 and 21600")

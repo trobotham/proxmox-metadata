@@ -157,7 +157,10 @@ func loadConfig(path string) (*runtimeConfig, error) {
 		return nil, err
 	}
 	if raw.Listen == "" {
-		raw.Listen = "169.254.169.254:80"
+		raw.Listen = metadataIP + ":80"
+	}
+	if err := validateListen(raw.Listen); err != nil {
+		return nil, err
 	}
 	requireToken := true
 	if raw.RequireToken != nil {
@@ -195,6 +198,24 @@ func loadConfig(path string) (*runtimeConfig, error) {
 		maxTokenTTL: time.Duration(raw.MaxTokenTTLSeconds) * time.Second,
 		instances: raw.Instances,
 	}, nil
+}
+
+// metadataIP is the only address the service may bind. Binding a wildcard
+// address would capture port 80 on every host interface.
+const metadataIP = "169.254.169.254"
+
+func validateListen(listen string) error {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("listen %q: %w", listen, err)
+	}
+	if host != metadataIP {
+		return fmt.Errorf("listen %q: host must be %s", listen, metadataIP)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("listen %q: invalid port", listen)
+	}
+	return nil
 }
 
 func parseSource(value string) (*net.IPNet, error) {

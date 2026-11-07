@@ -13,7 +13,7 @@ func TestLoadConfigAndMatchMostSpecificSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	data := `{
-  "listen": "127.0.0.1:8080",
+  "listen": "169.254.169.254:8080",
   "require_token": true,
   "instances": [
     {"sources":["192.0.2.0/24"],"instance_id":"broad","vm_id":100,"hostname":"broad"},
@@ -28,7 +28,7 @@ func TestLoadConfigAndMatchMostSpecificSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.listen != "127.0.0.1:8080" || !cfg.requireToken {
+	if cfg.listen != "169.254.169.254:8080" || !cfg.requireToken {
 		t.Fatalf("unexpected runtime config: %+v", cfg)
 	}
 	s := &server{cfg: cfg, tokens: make(map[string]tokenRecord)}
@@ -75,5 +75,17 @@ func TestParseSourceDefaultsToHostPrefix(t *testing.T) {
 	v6, err := parseSource("2001:db8:100::43")
 	if err != nil || v6.String() != "2001:db8:100::43/128" {
 		t.Fatalf("IPv6 result=%v error=%v", v6, err)
+	}
+}
+
+func TestValidateListenRejectsNonMetadataHosts(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{":80", "0.0.0.0:80", "[::]:80", "127.0.0.1:80", "169.254.169.254", "169.254.169.254:0"} {
+		if err := validateListen(bad); err == nil {
+			t.Errorf("validateListen(%q) accepted", bad)
+		}
+	}
+	if err := validateListen("169.254.169.254:80"); err != nil {
+		t.Fatal(err)
 	}
 }
